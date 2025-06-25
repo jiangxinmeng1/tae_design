@@ -39,6 +39,7 @@ CREATE TABLE mo_async_index_log (
     error_msg VARCHAR(255) NOT NULL,
     info VARCHAR(255) NOT NULL,
     drop_at VARCHAR(32) NULL,
+    sinker_config VARCHAR(32) NULL,
 );
 ```
 - When a table is created with async indexes, a record will be inserted into `mo_async_index_log` for each async index.
@@ -84,12 +85,18 @@ Since only tasks with the same watermark can be collected together, the newly ad
 ```golang
 // Multiple tables can share a single sinker.
 // Changes to table IDs are not monitored — if a truncate occurs, the task needs to be rebuilt.
-Createtask(taskName string,accountid int,sinker Sinker,tableDef TableDef, indexName string)(error)
+type SinkerInfo struct{
+  SinkerType int8
+  TableName string
+  DBName string
+}
+Createtask(taskName string,accountid int,sinkerInfo SinkerInfo,tableDef TableDef, indexName string)(error)
 Deletetask(taskName string)
 func NewSinker(
 	cnUUID string,
 	dbTblInfo *DbTableInfo,
 	tableDef *plan.TableDef,
+  sinkerInfo SinkerInfo,
   ) Sinker
 type Sinker interface{
   Sink(ctx context.Context,data *DecoderOutput)
