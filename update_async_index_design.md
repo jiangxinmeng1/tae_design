@@ -72,6 +72,52 @@ CREATE TABLE mo_async_index_iterations (
 - It will clean up the `mo_async_index_iterations` table for the iterations with smaller `end_at` of a account.
 - It could be very low frequency.
 
+6. Pipeline
+
+* Data collection is done on a table level. If a table has multiple subscribed indexes, all columns will be collected at once.
+
+* When adding a new index to an existing table:
+
+Since only tasks with the same watermark can be collected together, the newly added index must catch up to the table’s current watermark. First, data from time 0 to t1 (the subscription time) will be collected for the index. This step might be slow and is performed outside the queue. Then, data from t1 to the current watermark is collected within the queue. Once caught up, the new index will be collected together with the other indexes of the table.
+
+Indexes of different tables added in the same batch will have the same watermark (i.e., the same "from" and "to" values). However, each "from-to" interval may contain a large amount of data and will be sent in multiple `DecoderOutput`, the time order between different tables is not guaranteed.
+
+## Interface
+```golang
+types IndexInfo struct{
+  dbName string
+  tableName string
+  indexName string
+}
+// Multiple tables can share a single sinker.
+// Changes to table IDs are not monitored — if a truncate occurs, the task needs to be rebuilt.
+Createtask(taskName string,accountid int,sinker Sinker,index []*IndexInfo)(error)
+Deletetask(taskName string)
+
+type Sinker interface{
+  Sink(ctx context.Context,data *DecoderOutput)
+  SendBegin()
+  SendCommit()
+  SendRollback()
+  sendDummy()
+}
+type DecoderOutput struct {
+  tableName string
+	outputTyp      OutputType//snapshot,tail
+	noMoreData     bool
+	fromTs, toTs   types.TS
+  insertBatch *batch.Batch//replaceinto(all columns from table+ts)
+  deleteBatch *batch.Batch//delete(pk+ts)
+}
+```
+
+
+
+
+
+
+
+
 
 
 
