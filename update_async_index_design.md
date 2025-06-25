@@ -33,7 +33,7 @@ CREATE TABLE mo_async_index_log (
     id INT AUTO_INCREMENT PRIMARY KEY,
     account_id INT NOT NULL,
     table_id INT NOT NULL,
-    index_id INT NOT NULL,
+    index_name VARCHAR NOT NULL,
     last_sync_txn_ts VARCHAR(32)  NOT NULL,
     err_code INT NOT NULL,
     error_msg VARCHAR(255) NOT NULL,
@@ -86,7 +86,11 @@ Since only tasks with the same watermark can be collected together, the newly ad
 // Changes to table IDs are not monitored — if a truncate occurs, the task needs to be rebuilt.
 Createtask(taskName string,accountid int,sinker Sinker,tableDef TableDef, indexName string)(error)
 Deletetask(taskName string)
-
+func NewSinker(
+	cnUUID string,
+	dbTblInfo *DbTableInfo,
+	tableDef *plan.TableDef,
+  ) Sinker
 type Sinker interface{
   Sink(ctx context.Context,data *DecoderOutput)
   SendBegin()
