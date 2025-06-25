@@ -90,7 +90,7 @@ type SinkerInfo struct{
   TableName string
   DBName string
 }
-Createtask(taskName string,accountid int,sinkerInfo SinkerInfo,tableDef TableDef, indexName string)(error)
+CreateTask(taskName string,accountid int, pitr_id int, sinkerinfo_json SinkerInfo)(error)
 Deletetask(taskName string)
 func NewSinker(
 	cnUUID string,
