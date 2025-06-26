@@ -107,6 +107,11 @@ type Sinker interface{
   SendCommit()
   SendRollback()
   sendDummy()
+  Error() error
+  ClearError()
+  Reset()
+  Close()
+  RUN(ctx context.Context, ar *ActiveRoutine)
 }
 type DecoderOutput struct {
   tableName string
