@@ -92,7 +92,7 @@ type SinkerInfo struct{
   IndexName string
 }
 
-func CreateTask(taskName string,accountid int, pitr_id int, sinkerinfo_json SinkerInfo)(error)
+func CreateTask(taskName string,accountid int, pitr_id int, sinkerinfo_json SinkerInfo, dbTblInfo *DbTableInfo)(error)
 func Deletetask(taskName string)
 
 func NewSinker(
