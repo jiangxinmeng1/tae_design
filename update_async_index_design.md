@@ -89,10 +89,12 @@ type SinkerInfo struct{
   SinkerType int8
   TableName string
   DBName string
+  IndexName string
 }
 CreateTask(taskName string,accountid int, pitr_id int, sinkerinfo_json SinkerInfo)(error)
 Deletetask(taskName string)
 func NewSinker(
+  proc *process.Process,
 	cnUUID string,
 	dbTblInfo *DbTableInfo,
 	tableDef *plan.TableDef,
