@@ -96,13 +96,11 @@ func CreateTask(taskName string,accountid int, pitr_id int, sinkerinfo_json Sink
 func Deletetask(taskName string)
 
 func NewSinker(
-    proc       *process.Process,
   	cnUUID     string,
   	dbTblInfo  *DbTableInfo,
     tableDef   *plan.TableDef,
     sinkerInfo SinkerInfo,
-) Sinker
-
+) Sinker {}
 type Sinker interface{
   Sink(ctx context.Context,data *DecoderOutput)
   SendBegin()
