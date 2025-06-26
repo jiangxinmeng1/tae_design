@@ -92,8 +92,8 @@ type SinkerInfo struct{
   IndexName string
 }
 
-CreateTask(taskName string,accountid int, pitr_id int, sinkerinfo_json SinkerInfo)(error)
-Deletetask(taskName string)
+func CreateTask(taskName string,accountid int, pitr_id int, sinkerinfo_json SinkerInfo)(error)
+func Deletetask(taskName string)
 
 func NewSinker(
   proc *process.Process,
