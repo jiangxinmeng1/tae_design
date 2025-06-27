@@ -39,7 +39,7 @@ CREATE TABLE mo_async_index_log (
     last_sync_txn_ts VARCHAR(32)  NOT NULL,
     err_code INT NOT NULL,
     error_msg VARCHAR(255) NOT NULL,
-    iteration_state INT NOT NULL, -- running/finished
+    table_state INT NOT NULL, -- running/finished
     info VARCHAR(255) NOT NULL,
     drop_at VARCHAR(32) NULL,
     sinker_config VARCHAR(32) NULL,
@@ -50,19 +50,18 @@ CREATE TABLE mo_async_index_log (
 - When the index is dropped, the `drop_at` will be updated and the record will be deleted asynchronously.
 
 //TODO index name may be ""
-3. 每10s会扫描一次mo_async_index_log。
-挑出符号要求的表检查是否有更新。如果没有更新直接更新watermark。如果有更新就同步数据。同步之前先更新mo_async_index_iterations表。执行器按mo_async_index_iterations执行同步任务。同一张表的index会尽量保持watermark一致，这样可以一起同步。
-会按这些要规则创建iteration：
-* watermark为0的index是新建的,如果这张表没有其他Index，同步从0到现在的数据。如果表上已经有index了，同步从0到其他Index的watermark，这样下次它们可以一起同步。因为这个任务可能非常久，为了不影响表上其他索引，其他索引会正常更新。
-* 如果一张表的时间戳一致，而且没有正在跑的iteration（除了新建的索引以外），同步从watermark到now的数据。
-* 可能某几个index的watermark落后表上的其他索引。因为新建索引第一次同步的过程中可能表上其他的索引又更新了，这个索引会落后于整张表。如果新的表上连续建多个索引，它们拿到的第一个watermark不一样，这样也会产生落后的索引。每次挑选一个索引同步到表上最大的watermark。这样的索引应该不多，很快能让整张表的水位一致。
+3. Every 10 seconds, `mo_async_index_log` is scanned.
+- It filters out the tables that meet the criteria and checks for updates. If there are no updates, the watermark is updated directly. If there are updates, data synchronization is triggered. Before synchronizing, the `mo_async_index_iterations` table is updated. The executors performs synchronization tasks based on the `mo_async_index_iterations` table.
+- Indexes on the same table try to maintain consistent watermarks so they can be synchronized together.
+- Iterations will be created under the following conditions:
 
-每个同步任务对应mo_async_index_iterations中的一行。选中表和index后往mo_async_index_iterations插入，填写account_id,table_id,index_names,from_ts,to_ts。
+* If an index has a watermark of 0, it is a newly created index: 1.If there are no other indexes on the table, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this task may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
 
-- When any error occurs, the `err_code` and `error_msg` will be updated.
-  - err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
+* If all indexes on a table have the same timestamp and there is no running iteration (except for newly created indexes), synchronization occurs from the watermark to the current time.
 
-4. After collecting the table list, it starts to update index tables according to the table list, which will be called a `iteration`. In a iteration:
+* Some indexes may fall behind others on the same table: 1.This happens because during the initial full sync of a new index, other indexes on the table might continue to update, causing this index to lag behind. 2.It may also happen if multiple indexes are created consecutively on a new table, and each gets a different initial watermark. In such cases, one lagging index is selected at a time to catch up to the table's maximum watermark. These lagging indexes should be few in number and can quickly be brought into alignment with the table's overall watermark.
+
+4. After collecting the table list, it starts to update index tables according to the table list, which will be called a `iteration`.Each synchronization task corresponds to a row in `mo_async_index_iterations`. In a iteration:
 ```sql
 CREATE TABLE mo_async_index_iterations (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -71,18 +70,30 @@ CREATE TABLE mo_async_index_iterations (
     index_names VARCHAR(255),--multiple indexes
     from_ts VARCHAR(32) NOT NULL,
     to_ts VARCHAR(32) NOT NULL,
-    error_json VARCHAR(255) NOT NULL,--存多个error，多个sinker的error可能不一样
-    start_at VARCHAR(32) NOT NULL,
-    end_at VARCHAR(32) NOT NULL,
+    error_json VARCHAR(255) NOT NULL,--Multiple errors are stored. Different sinkers may have different errors.
+    start_at VARCHAR(32) NULL,
+    end_at VARCHAR(32) NULL,
 );
 ```
-- If the list of tables is too large, it will be executed in multiple executors.
-- 每10s扫描一次
-- 每个executor一次处理一个iteration，包括一张表和上面的一个或多个index。
-- It's better to avoid transferring the diff data to SQL.
-- At the end of the iteration, a record will be inserted into `mo_async_index_iterations` for the iteration.
+- If there're too many iterations, they will be executed in multiple executors.
+- Each executor processes one iteration at a time, which includes one table and one or more indexes on that table. The source table is scanned once, and the data is synchronized to all the indexes.
+- Each index corresponds to one sinker. The synchronized data is sent to the sinker in `DecoderOutput` format
+```golang
+type DecoderOutput struct {
+  tableName string
+	outputTyp      OutputType//snapshot,tail
+	noMoreData     bool
+	fromTs, toTs   types.TS
+  insertBatch *batch.Batch//replaceinto(all columns from table+ts)
+  deleteBatch *batch.Batch//delete(pk+ts)
+}
+```
+- When any error occurs, the `error_json` will be updated, which contains the errors from all sinkers. Each sinker has an error code and an error message.
+- err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
 
-5. The task periodically handle the `GC` of the `mo_async_index_log` table and `mo_async_index_iterations` table.
+- At the end of the iteration, insert a row into `mo_async_index_iterations` and update `table_state`, `error_code`, `error_message`, and `watermark` in `mo_async_index_log`.
+
+6. The task periodically handle the `GC` of the `mo_async_index_log` table and `mo_async_index_iterations` table.
 - It will clean up the `mo_async_index_log` table for the tables that with `drop_at` is not empty and one day has passed.
 - It will clean up the `mo_async_index_iterations` table for the iterations with smaller `end_at` of a account.
 - It could be very low frequency.
@@ -95,7 +106,7 @@ type SinkerInfo struct{
   SinkerType int8
   TableName string
   DBName string
-  IndexName string//可能是""
+  IndexName string
 }
 
 // return true if create, return false if task already exists, return error when error
