@@ -49,7 +49,6 @@ CREATE TABLE mo_async_index_log (
 - When a index is updated, the `last_sync_txn_ts` will be updated.
 - When the index is dropped, the `drop_at` will be updated and the record will be deleted asynchronously.
 
-//TODO index name may be ""
 3. Every 10 seconds, `mo_async_index_log` is scanned.
 - It filters out the tables that meet the criteria and checks for updates. If there are no updates, the watermark is updated directly. If there are updates, data synchronization is triggered. Before synchronizing, the `mo_async_index_iterations` table is updated. The executors performs synchronization tasks based on the `mo_async_index_iterations` table.
 - Indexes on the same table try to maintain consistent watermarks so they can be synchronized together.
