@@ -111,7 +111,7 @@ type SinkerInfo struct{
 }
 
 // return true if create, return false if task already exists, return error when error
-func CreateTask(ctx context.Context,txn client.TxnOperator, pitr_id int, sinkerinfo_json SinkerInfo)(bool, error)
+func CreateTask(ctx context.Context,txn client.TxnOperator, pitr_id int, sinkerinfo_json *SinkerInfo)(bool, error)
 
 // return true if delete success, return false if no task found, return error when delete failed.
 func DeleteTask(ctx context.Context,txn client.TxnOperator,sinkinfo *SinkerInfo) (bool, error)
@@ -119,7 +119,7 @@ func DeleteTask(ctx context.Context,txn client.TxnOperator,sinkinfo *SinkerInfo)
 func NewSinker(
   cnUUID     string,
   tableDef   *plan.TableDef,
-  sinkerInfo SinkerInfo,
+  sinkerInfo *SinkerInfo,
 ) (Sinker,error)
 
 type Sinker interface{
