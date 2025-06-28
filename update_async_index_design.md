@@ -114,7 +114,7 @@ type SinkerInfo struct{
 func CreateTask(ctx context.Context,txn client.TxnOperator, pitr_id int, sinkerinfo_json SinkerInfo)(bool, error)
 
 // return true if delete success, return false if no task found, return error when delete failed.
-func DeleteTask(ctx context.Context,txn client.TxnOperator,sinkinfo SinkerInfo) (bool, error)
+func DeleteTask(ctx context.Context,txn client.TxnOperator,sinkinfo *SinkerInfo) (bool, error)
 
 func NewSinker(
   cnUUID     string,
