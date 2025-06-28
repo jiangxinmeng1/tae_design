@@ -39,7 +39,6 @@ CREATE TABLE mo_async_index_log (
     last_sync_txn_ts VARCHAR(32)  NOT NULL,
     err_code INT NOT NULL,
     error_msg VARCHAR(255) NOT NULL,
-    table_state INT NOT NULL, -- running/finished
     info VARCHAR(255) NOT NULL,
     drop_at VARCHAR(32) NULL,
     sinker_config VARCHAR(32) NULL,
@@ -92,7 +91,7 @@ type DecoderOutput struct {
 - When any error occurs, the `error_json` will be updated, which contains the errors from all sinkers. Each sinker has an error code and an error message.
 - err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
 
-- At the end of the iteration, insert a row into `mo_async_index_iterations` and update `table_state`, `error_code`, `error_message`, and `watermark` in `mo_async_index_log`.
+- At the end of the iteration, insert a row into `mo_async_index_iterations` and update `error_code`, `error_message`, and `watermark` in `mo_async_index_log`.
 
 6. The task periodically handle the `GC` of the `mo_async_index_log` table and `mo_async_index_iterations` table.
 - It will clean up the `mo_async_index_log` table for the tables that with `drop_at` is not empty and one day has passed.
