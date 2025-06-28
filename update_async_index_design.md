@@ -48,10 +48,10 @@ CREATE TABLE mo_async_index_log (
 - When a table is created with async indexes, a record will be inserted into `mo_async_index_log` for each async index.
 - When a index is updated, the `last_sync_txn_ts` will be updated.
 - When the index is dropped, the `drop_at` will be updated and the record will be deleted asynchronously.
-- To ensure that the transaction for creating or dropping an index has been committed before registering the index, the system subscribes to the logtail of `mo_async_index_log`.It waits for the logtail to deliver the insert or delete information before registering the index in memory.
+- To ensure that the transaction for creating or dropping an index has been committed before registering the index in memory, it subscribes to the logtail of `mo_async_index_log`.It waits for the logtail to deliver the insert or delete information.
 
 3. Every 10 seconds, scan indexes and tables in memory.
-- It filters out the tables that meet the criteria and checks for updates. If there are no updates, the watermark is updated directly. If there are updates, data synchronization is triggered. Before synchronizing, the `mo_async_index_iterations` table is updated. The executors performs synchronization tasks based on the `mo_async_index_iterations` table.
+- It filters out the tables that meet the criteria and checks for updates. If there are no updates, the watermark is updated directly. If there are updates, data synchronization is triggered. The iteration task is passed to the executor.
 - Indexes on the same table try to maintain consistent watermarks so they can be synchronized together.
 - Iterations will be created under the following conditions:
 
