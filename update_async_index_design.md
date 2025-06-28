@@ -120,7 +120,7 @@ func NewSinker(
   cnUUID     string,
   tableDef   *plan.TableDef,
   sinkerInfo SinkerInfo,
-) Sinker {}
+) (Sinker,error)
 
 type Sinker interface{
   Sink(ctx context.Context,data *DecoderOutput)
