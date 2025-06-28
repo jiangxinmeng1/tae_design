@@ -48,8 +48,9 @@ CREATE TABLE mo_async_index_log (
 - When a table is created with async indexes, a record will be inserted into `mo_async_index_log` for each async index.
 - When a index is updated, the `last_sync_txn_ts` will be updated.
 - When the index is dropped, the `drop_at` will be updated and the record will be deleted asynchronously.
+- To ensure that the transaction for creating or dropping an index has been committed before registering the index, the system subscribes to the logtail of `mo_async_index_log`.It waits for the logtail to deliver the insert or delete information before registering the index in memory.
 
-3. Every 10 seconds, `mo_async_index_log` is scanned.
+3. Every 10 seconds, scan indexes and tables in memory.
 - It filters out the tables that meet the criteria and checks for updates. If there are no updates, the watermark is updated directly. If there are updates, data synchronization is triggered. Before synchronizing, the `mo_async_index_iterations` table is updated. The executors performs synchronization tasks based on the `mo_async_index_iterations` table.
 - Indexes on the same table try to maintain consistent watermarks so they can be synchronized together.
 - Iterations will be created under the following conditions:
@@ -109,10 +110,10 @@ type SinkerInfo struct{
 }
 
 // return true if create, return false if task already exists, return error when error
-func CreateTask(c *Compile, pitr_id int, sinkerinfo_json SinkerInfo)(bool, error)
+func CreateTask(ctx context.Context,txn client.TxnOperator, pitr_id int, sinkerinfo_json SinkerInfo)(bool, error)
 
 // return true if delete success, return false if no task found, return error when delete failed.
-func Deletetask(c * Compile, sinkinfo SinkerInfo) (bool, error)
+func Deletetask(ctx context.Context,txn client.TxnOperator,, sinkinfo SinkerInfo) (bool, error)
 
 func NewSinker(
   	cnUUID     string,
