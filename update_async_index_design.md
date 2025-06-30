@@ -43,20 +43,6 @@ CREATE TABLE mo_async_index_log (
     drop_at VARCHAR(32) NULL,
     sinker_config VARCHAR(32) NULL,
 );
--- column name
-async special task
-
-registerjob(spec,txnop)
-
-indexSpec: name, 
-
-iteration10(100,200) tablea batch
-
-CN
-in memory lazyupdate
-
-txnop & watermarkupdater(txn) insert/delete
-
 
 ```
 - When a table is created with async indexes, a record will be inserted into `mo_async_index_log` for each async index.
@@ -65,6 +51,7 @@ txnop & watermarkupdater(txn) insert/delete
 - To ensure that the transaction for creating or dropping an index has been committed before registering the index in memory, it subscribes to the logtail of `mo_async_index_log`.It waits for the logtail to deliver the insert or delete information.
 
 3. Every 10 seconds, scan indexes and tables in memory.
+
 - It filters out the tables that meet the criteria and checks for updates. If there are updates, data synchronization is triggered. The iteration task is passed to the executor.
 - Indexes on the same table try to maintain consistent watermarks so they can be synchronized together.
 
@@ -85,26 +72,35 @@ CREATE TABLE mo_async_index_iterations (
     index_names VARCHAR(255),--multiple indexes
     from_ts VARCHAR(32) NOT NULL,
     to_ts VARCHAR(32) NOT NULL,
-    error_json VARCHAR(255) NOT NULL,--Multiple errors are stored. Different sinkers may have different errors.
+    error_json VARCHAR(255) NOT NULL,--Multiple errors are stored. Different consumers may have different errors.
     start_at VARCHAR(32) NULL,
     end_at VARCHAR(32) NULL,
 );
 ```
 - If there're too many iterations, they will be executed in multiple executors.
 - Each executor processes one iteration at a time, which includes one table and one or more indexes on that table. The source table is scanned once, and the data is synchronized to all the indexes.
-- Each index corresponds to one sinker. The synchronized data is sent to the sinker in `DecoderOutput` format
-```golang
-type DecoderOutput struct {
-  tableName string
-	outputTyp      OutputType//snapshot,tail
-	noMoreData     bool
-	fromTs, toTs   types.TS
-  insertBatch *batch.Batch//replaceinto(all columns from table+ts)
-  deleteBatch *batch.Batch//delete(pk+ts)
-}
 ```
-- When any error occurs, the `error_json` will be updated, which contains the errors from all sinkers. Each sinker has an error code and an error message.
+              +--------------------+
+              |   Source Table     |
+              |  data [from, to]   |
+              +--------+-----------+
+                       |
+               [Read a data batch]
+                       |
+        +--------------+--------------+--------------+
+        |                             |              |
+   +----v----+                  +-----v----+    +-----v----+
+   |Consumer1|                  |Consumer2 |    |Consumer3 |
+   | .Next() |                  | .Next()  |    | .Next()  |
+   +---------+                  +----------+    +----------+
+        |                             |              |
+  Receives batch               Receives batch   Receives batch
+
+```
+- Each index corresponds to one consumer. Each consumer calls `Next()` to retrieve data, including insert batches and delete batches. Since multiple consumers share the same iteration, the returned insert batch may contain columns for other indexes as well, so consumers need to distinguish them using `batch.Attr`. Consumers involved in the same iteration can affect each other — if one consumer is slow in processing, the others may get blocked when calling `Next()`.
+- When any error occurs, the `error_json` will be updated, which contains the errors from all consumers. Each consumer has an error code and an error message.
 - err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
+- In each iteration, data consumption and watermark updates are placed in the same transaction, so they commit together. Upon restart, the latest watermark can be retrieved, avoiding duplicate data delivery. The initial synchronization involves a large volume of data, so it is not placed in a single transaction. If the process is not completed before a restart, all data will be deleted and the synchronization will restart from scratch.
 
 - At the end of the iteration, insert a row into `mo_async_index_iterations` and update `error_code`, `error_message`, and `last_sync_txn_ts` in `mo_async_index_log`.
 
@@ -112,6 +108,7 @@ type DecoderOutput struct {
 - It will clean up the `mo_async_index_log` table for the tables that with `drop_at` is not empty and one day has passed.
 - It will clean up the `mo_async_index_iterations` table for the iterations with smaller `end_at` of a account.
 - It could be very low frequency.
+
 
 ## Interface
 ```golang
@@ -126,15 +123,20 @@ type SinkerInfo struct{
 }
 
 // return true if create, return false if task already exists, return error when error
-func RegisterJob(ctx context.Context,txn client.TxnOperator, pitr_id int, sinkerinfo_json *SinkerInfo)(Consumer, bool, error)
+func RegisterJob(ctx context.Context,txn client.TxnOperator, pitr_id int, sinkerinfo_json *SinkerInfo)(bool, error)
 
 // return true if delete success, return false if no task found, return error when delete failed.
 func UnregisterJob(ctx context.Context,txn client.TxnOperator,sinkinfo *SinkerInfo) (bool, error)
 
+func NewConsumer(
+  cnUUID string,
+  tableDef *plan.TableDef,
+  consumerInfo *ConsumerInfo,
+)(Consumer,error)
 // insertBatch: index columns+pk+ts
 // deleteBatch: pk+ts
 type Consumer interface{
-  Next() (insertBatch *batch.Batch, deleteBatch *batch.Batch, noMoreDate bool, err error)
+  Next()(insertBatch *batch.Batch, deleteBatch *batch.Batch, noMoreDate bool, err error)
   SetError(err error)
   UpdateWatermark(txn client.TxnOperator)
 }
