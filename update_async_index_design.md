@@ -33,9 +33,9 @@ CREATE TABLE mo_async_index_log (
     id INT AUTO_INCREMENT PRIMARY KEY,
     account_id INT NOT NULL,
     table_id INT NOT NULL,
-    tableName VARCHAR NOT NULL,
-    dbName VARCHAR NOT NULL,
+    db_id VARCHAR NOT NULL,
     index_name VARCHAR NOT NULL,
+    columns VARCHAR NOT NULL,
     last_sync_txn_ts VARCHAR(32)  NOT NULL,
     err_code INT NOT NULL,
     error_msg VARCHAR(255) NOT NULL,
@@ -43,6 +43,21 @@ CREATE TABLE mo_async_index_log (
     drop_at VARCHAR(32) NULL,
     sinker_config VARCHAR(32) NULL,
 );
+-- column name
+async special task
+
+registerjob(spec,txnop)
+
+indexSpec: name, 
+
+iteration10(100,200) tablea batch
+
+CN
+in memory lazyupdate
+
+txnop & watermarkupdater(txn) insert/delete
+
+
 ```
 - When a table is created with async indexes, a record will be inserted into `mo_async_index_log` for each async index.
 - When a index is updated, the `last_sync_txn_ts` will be updated.
@@ -91,7 +106,7 @@ type DecoderOutput struct {
 - When any error occurs, the `error_json` will be updated, which contains the errors from all sinkers. Each sinker has an error code and an error message.
 - err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
 
-- At the end of the iteration, insert a row into `mo_async_index_iterations` and update `error_code`, `error_message`, and `watermark` in `mo_async_index_log`.
+- At the end of the iteration, insert a row into `mo_async_index_iterations` and update `error_code`, `error_message`, and `last_sync_txn_ts` in `mo_async_index_log`.
 
 6. The task periodically handle the `GC` of the `mo_async_index_log` table and `mo_async_index_iterations` table.
 - It will clean up the `mo_async_index_log` table for the tables that with `drop_at` is not empty and one day has passed.
@@ -107,39 +122,21 @@ type SinkerInfo struct{
   TableName string
   DBName string
   IndexName string
+  ColumnNames []string
 }
 
 // return true if create, return false if task already exists, return error when error
-func CreateTask(ctx context.Context,txn client.TxnOperator, pitr_id int, sinkerinfo_json *SinkerInfo)(bool, error)
+func RegisterJob(ctx context.Context,txn client.TxnOperator, pitr_id int, sinkerinfo_json *SinkerInfo)(Consumer, bool, error)
 
 // return true if delete success, return false if no task found, return error when delete failed.
-func DeleteTask(ctx context.Context,txn client.TxnOperator,sinkinfo *SinkerInfo) (bool, error)
+func UnregisterJob(ctx context.Context,txn client.TxnOperator,sinkinfo *SinkerInfo) (bool, error)
 
-func NewSinker(
-  cnUUID     string,
-  tableDef   *plan.TableDef,
-  sinkerInfo *SinkerInfo,
-) (Sinker,error)
-
-type Sinker interface{
-  Sink(ctx context.Context,data *DecoderOutput)
-  SendBegin()
-  SendCommit()
-  SendRollback()
-  sendDummy()
-  Error() error
-  ClearError()
-  Reset()
-  Close()
-  RUN(ctx context.Context, ar *ActiveRoutine)
-}
-type DecoderOutput struct {
-  tableName string
-	outputTyp      OutputType//snapshot,tail
-	noMoreData     bool
-	fromTs, toTs   types.TS
-  insertBatch *batch.Batch//replaceinto(all columns from table+ts)
-  deleteBatch *batch.Batch//delete(pk+ts)
+// insertBatch: index columns+pk+ts
+// deleteBatch: pk+ts
+type Consumer interface{
+  Next() (insertBatch *batch.Batch, deleteBatch *batch.Batch, noMoreDate bool, err error)
+  SetError(err error)
+  UpdateWatermark(txn client.TxnOperator)
 }
 ```
 
