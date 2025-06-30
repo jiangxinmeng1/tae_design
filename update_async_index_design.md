@@ -119,11 +119,10 @@ type SinkerInfo struct{
   TableName string
   DBName string
   IndexName string
-  ColumnNames []string
 }
 
 // return true if create, return false if task already exists, return error when error
-func RegisterJob(ctx context.Context,txn client.TxnOperator, pitr_id int, sinkerinfo_json *SinkerInfo)(bool, error)
+func RegisterJob(ctx context.Context,txn client.TxnOperator, pitr_name string, sinkerinfo_json *SinkerInfo)(bool, error)
 
 // return true if delete success, return false if no task found, return error when delete failed.
 func UnregisterJob(ctx context.Context,txn client.TxnOperator,sinkinfo *SinkerInfo) (bool, error)
@@ -133,17 +132,18 @@ func NewConsumer(
   tableDef *plan.TableDef,
   consumerInfo *ConsumerInfo,
 )(Consumer,error)
+
 // insertBatch: index columns+pk+ts
 // deleteBatch: pk+ts
+// DataRetriever should have a member (txn client.TxnOperator)
 interface DataRetriever {
-    Next(client.TxnOperator) (insertBatch, deleteBatch, noMoreData)
-    UpdateWatermark(client.TxnOperator)
+    Next() (insertBatch, deleteBatch, noMoreData)
+    UpdateWatermark()
 }
 type Consumer interface{
-  Next(DataRetriever)error
+  Consume(DataRetriever)error
   Reset()
   Close()
-  Run()
 }
 ```
 
