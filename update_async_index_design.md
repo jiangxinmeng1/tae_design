@@ -135,10 +135,15 @@ func NewConsumer(
 )(Consumer,error)
 // insertBatch: index columns+pk+ts
 // deleteBatch: pk+ts
+interface DataRetriever {
+    Next(client.TxnOperator) (insertBatch, deleteBatch, noMoreData)
+    UpdateWatermark(client.TxnOperator)
+}
 type Consumer interface{
-  Next()(insertBatch *batch.Batch, deleteBatch *batch.Batch, noMoreDate bool, err error)
-  SetError(err error)
-  UpdateWatermark(txn client.TxnOperator)
+  Next(DataRetriever)error
+  Reset()
+  Close()
+  Run()
 }
 ```
 
