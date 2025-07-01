@@ -141,7 +141,7 @@ interface DataRetriever {
   //TAIL can use INSERT, SNAPSHOT need REPLACE INTO
   //in SNAPSHOT, deleteBatch is nil
     Next() (insertBatch *AtomicBatch, deleteBatch *AtomicBatch, noMoreData bool, datatype int8, err error)
-    UpdateWatermarker(executor.TxnExecutor)
+    UpdateWatermarker(executor.TxnExecutor)error
 }
 type Consumer interface{
   Consume(DataRetriever)error
