@@ -137,8 +137,11 @@ func NewConsumer(
 // deleteBatch: pk+ts
 // DataRetriever should have a member (txn client.TxnOperator)
 interface DataRetriever {
-    Next() (insertBatch, deleteBatch, noMoreData)
-    UpdateWatermark()
+  //SNAPSHOT = 0, TAIL = 1
+  //TAIL can use INSERT
+  //in SNAPSHOT, deleteBatch is nil
+    Next() (insertBatch *AtomicBatch, deleteBatch *AtomicBatch, noMoreData bool, datatype int8, err error)
+    GetTxn() client.TxnOperator
 }
 type Consumer interface{
   Consume(DataRetriever)error
