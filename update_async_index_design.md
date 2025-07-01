@@ -114,18 +114,18 @@ CREATE TABLE mo_async_index_iterations (
 ```golang
 // Multiple tables can share a single sinker.
 // Changes to table IDs are not monitored — if a truncate occurs, the task needs to be rebuilt.
-type SinkerInfo struct{
-  SinkerType int8
+type ConsumerInfo struct{
+  ConsumerType int8
   TableName string
   DBName string
   IndexName string
 }
 
 // return true if create, return false if task already exists, return error when error
-func RegisterJob(ctx context.Context,txn client.TxnOperator, pitr_name string, sinkerinfo_json *SinkerInfo)(bool, error)
+func RegisterJob(ctx context.Context,txn client.TxnOperator, pitr_name string, sinkerinfo_json *ConsumerInfo)(bool, error)
 
 // return true if delete success, return false if no task found, return error when delete failed.
-func UnregisterJob(ctx context.Context,txn client.TxnOperator,sinkinfo *SinkerInfo) (bool, error)
+func UnregisterJob(ctx context.Context,txn client.TxnOperator,sinkinfo *ConsumerInfo) (bool, error)
 
 func NewConsumer(
   cnUUID string,
@@ -138,7 +138,7 @@ func NewConsumer(
 // DataRetriever should have a member (txn client.TxnOperator)
 interface DataRetriever {
   //SNAPSHOT = 0, TAIL = 1
-  //TAIL can use INSERT
+  //TAIL can use INSERT, SNAPSHOT need REPLACE INTO
   //in SNAPSHOT, deleteBatch is nil
     Next() (insertBatch *AtomicBatch, deleteBatch *AtomicBatch, noMoreData bool, datatype int8, err error)
     GetTxn() client.TxnOperator
