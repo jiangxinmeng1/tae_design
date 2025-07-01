@@ -145,7 +145,6 @@ interface DataRetriever {
 }
 type Consumer interface{
   Consume(DataRetriever)error
-  Reset()
   Close()
 }
 ```
