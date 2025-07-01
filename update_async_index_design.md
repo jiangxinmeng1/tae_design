@@ -133,7 +133,7 @@ func NewConsumer(
   consumerInfo *ConsumerInfo,
 )(Consumer,error)
 
-// insertBatch: index columns+pk+ts
+// insertBatch: all columns+ts
 // deleteBatch: pk+ts
 // DataRetriever should have a member (txn client.TxnOperator)
 interface DataRetriever {
