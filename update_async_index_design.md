@@ -31,9 +31,8 @@ Full-text and vector indexes are good examples.
 ```sql
 CREATE TABLE mo_async_index_log (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    account_id INT NOT NULL,
-    table_id INT NOT NULL,
-    db_id INT NOT NULL,
+    account_id INT UNSIGNED NOT NULL,
+    table_id BIGINT UNSIGNED NOT NULL,
     index_name VARCHAR NOT NULL,
     last_sync_txn_ts VARCHAR(32)  NOT NULL,
     err_code INT NOT NULL,
@@ -66,8 +65,8 @@ CREATE TABLE mo_async_index_log (
 ```sql
 CREATE TABLE mo_async_index_iterations (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    account_id INT NOT NULL,
-    table_id INT,
+    account_id INT UNSIGNED NOT NULL,
+    table_id BIGINT UNSIGNED NOT NULL,
     index_names VARCHAR(255),--multiple indexes
     from_ts VARCHAR(32) NOT NULL,
     to_ts VARCHAR(32) NOT NULL,
@@ -121,10 +120,10 @@ type ConsumerInfo struct{
 }
 
 // return true if create, return false if task already exists, return error when error
-func RegisterJob(ctx context.Context,txn client.TxnOperator, pitr_name string, sinkerinfo_json *ConsumerInfo)(bool, error)
+func RegisterJob(ctx context.Context,cnUUID string,txn client.TxnOperator, pitr_name string, sinkerinfo_json *ConsumerInfo)(bool, error)
 
 // return true if delete success, return false if no task found, return error when delete failed.
-func UnregisterJob(ctx context.Context,txn client.TxnOperator,sinkinfo *ConsumerInfo) (bool, error)
+func UnregisterJob(ctx context.Context,cnUUID string,txn client.TxnOperator,sinkinfo *ConsumerInfo) (bool, error)
 
 func NewConsumer(
   cnUUID string,
