@@ -145,7 +145,7 @@ interface DataRetriever {
     GetDataType() int8
 }
 type Consumer interface{
-  Consume(DataRetriever)error
+  Consume(context.Context, DataRetriever) error
 }
 ```
 
