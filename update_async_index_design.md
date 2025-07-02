@@ -35,13 +35,12 @@ CREATE TABLE mo_async_index_log (
     table_id INT NOT NULL,
     db_id VARCHAR NOT NULL,
     index_name VARCHAR NOT NULL,
-    columns VARCHAR NOT NULL,
     last_sync_txn_ts VARCHAR(32)  NOT NULL,
     err_code INT NOT NULL,
     error_msg VARCHAR(255) NOT NULL,
     info VARCHAR(255) NOT NULL,
     drop_at VARCHAR(32) NULL,
-    sinker_config VARCHAR(32) NULL,
+    consumer_config VARCHAR(32) NULL,
 );
 
 ```
@@ -141,7 +140,7 @@ interface DataRetriever {
   //TAIL can use INSERT, SNAPSHOT need REPLACE INTO
   //in SNAPSHOT, deleteBatch is nil
     Next() (insertBatch *AtomicBatch, deleteBatch *AtomicBatch, noMoreData bool, err error)
-    UpdateWatermarker(executor.TxnExecutor,executor.StatementOption)error
+    UpdateWatermark(executor.TxnExecutor,executor.StatementOption)error
     GetDataType() int8
 }
 type Consumer interface{
