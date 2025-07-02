@@ -33,14 +33,14 @@ CREATE TABLE mo_async_index_log (
     id INT AUTO_INCREMENT PRIMARY KEY,
     account_id INT NOT NULL,
     table_id INT NOT NULL,
-    db_id VARCHAR NOT NULL,
+    db_id INT NOT NULL,
     index_name VARCHAR NOT NULL,
     last_sync_txn_ts VARCHAR(32)  NOT NULL,
     err_code INT NOT NULL,
     error_msg VARCHAR(255) NOT NULL,
     info VARCHAR(255) NOT NULL,
-    drop_at VARCHAR(32) NULL,
-    consumer_config VARCHAR(32) NULL,
+    drop_at DATETIME NULL,
+    consumer_config VARCHAR(255) NULL,
 );
 
 ```
@@ -72,8 +72,8 @@ CREATE TABLE mo_async_index_iterations (
     from_ts VARCHAR(32) NOT NULL,
     to_ts VARCHAR(32) NOT NULL,
     error_json VARCHAR(255) NOT NULL,--Multiple errors are stored. Different consumers may have different errors.
-    start_at VARCHAR(32) NULL,
-    end_at VARCHAR(32) NULL,
+    start_at DATETIME NULL,
+    end_at DATETIME NULL,
 );
 ```
 - If there're too many iterations, they will be executed in multiple executors.
