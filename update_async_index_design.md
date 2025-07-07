@@ -30,7 +30,6 @@ Full-text and vector indexes are good examples.
 2. A new table `mo_async_index_log` is added to record the async index update information.
 ```sql
 CREATE TABLE mo_async_index_log (
-    id INT AUTO_INCREMENT PRIMARY KEY,
     account_id INT UNSIGNED NOT NULL,
     table_id BIGINT UNSIGNED NOT NULL,
     index_name VARCHAR NOT NULL,
