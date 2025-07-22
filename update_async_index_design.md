@@ -27,25 +27,28 @@ Full-text and vector indexes are good examples.
 
 1. Update async index is a task per tenant. The following design is based on this assumption.
 
-2. A new table `mo_async_index_log` is added to record the async index update information.
+2. A new table `mo_intra_system_change_propagation_log` is added to record the async index update information.
 ```sql
-CREATE TABLE mo_async_index_log (
-    account_id INT UNSIGNED NOT NULL,
-    table_id BIGINT UNSIGNED NOT NULL,
-    index_name VARCHAR NOT NULL,
-    last_sync_txn_ts VARCHAR(32)  NOT NULL,
-    err_code INT NOT NULL,
-    error_msg VARCHAR(255) NOT NULL,
-    info VARCHAR(255) NOT NULL,
-    drop_at DATETIME NULL,
-    consumer_config VARCHAR(255) NULL,
-);
+CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
+				account_id INT UNSIGNED NOT NULL,
+				table_id BIGINT UNSIGNED NOT NULL,
+				job_name VARCHAR NOT NULL,
+				job_type INT NOT NULL,
+				column_names VARCHAR NOT NULL,
+				last_sync_txn_ts VARCHAR(32)  NOT NULL,
+				err_code INT NOT NULL,
+				error_msg VARCHAR(255) NOT NULL,
+				info VARCHAR NOT NULL,
+				drop_at DATETIME NULL,
+				consumer_config VARCHAR(255) NULL,
+				primary key(account_id, table_id, job_name)
+			);
 
 ```
-- When a table is created with async indexes, a record will be inserted into `mo_async_index_log` for each async index.
+- When a table is created with async indexes, a record will be inserted into `mo_intra_system_change_propagation_log` for each async index.
 - When a index is updated, the `last_sync_txn_ts` will be updated.
 - When the index is dropped, the `drop_at` will be updated and the record will be deleted asynchronously.
-- To ensure that the transaction for creating or dropping an index has been committed before registering the index in memory, it subscribes to the logtail of `mo_async_index_log`.It waits for the logtail to deliver the insert or delete information.
+- To ensure that the transaction for creating or dropping an index has been committed before registering the index in memory, it subscribes to the logtail of `mo_intra_system_change_propagation_log`.It waits for the logtail to deliver the insert or delete information.
 
 3. Every 10 seconds, scan indexes and tables in memory.
 
@@ -60,20 +63,7 @@ CREATE TABLE mo_async_index_log (
 
    Some indexes may fall behind others on the same table: 1.This happens because during the initial full sync of a new index, other indexes on the table might continue to update, causing this index to lag behind. 2.It may also happen if multiple indexes are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging index is selected at a time to catch up to the table's maximum watermark. These lagging indexes should be few in number and can quickly be brought into alignment with the table's overall watermark.
 
-4. After collecting the table list, it starts to update index tables according to the table list, which will be called a `iteration`.Each synchronization task corresponds to a row in `mo_async_index_iterations`. In a iteration:
-```sql
-CREATE TABLE mo_async_index_iterations (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    account_id INT UNSIGNED NOT NULL,
-    table_id BIGINT UNSIGNED NOT NULL,
-    index_names VARCHAR(255),--multiple indexes
-    from_ts VARCHAR(32) NOT NULL,
-    to_ts VARCHAR(32) NOT NULL,
-    error_json VARCHAR(255) NOT NULL,--Multiple errors are stored. Different consumers may have different errors.
-    start_at DATETIME NULL,
-    end_at DATETIME NULL,
-);
-```
+4. After collecting the table list, it starts to update index tables according to the table list, which will be called a `iteration`. 
 - If there're too many iterations, they will be executed in multiple executors.
 - Each executor processes one iteration at a time, which includes one table and one or more indexes on that table. The source table is scanned once, and the data is synchronized to all the indexes.
 ```
@@ -99,11 +89,9 @@ CREATE TABLE mo_async_index_iterations (
 - err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
 - In each iteration, data consumption and watermark updates are placed in the same transaction, so they commit together. Upon restart, the latest watermark can be retrieved, avoiding duplicate data delivery. The initial synchronization involves a large volume of data, so it is not placed in a single transaction. If the process is not completed before a restart, all data will be deleted and the synchronization will restart from scratch.
 
-- At the end of the iteration, insert a row into `mo_async_index_iterations` and update `error_code`, `error_message`, and `last_sync_txn_ts` in `mo_async_index_log`.
 
-6. The task periodically handle the `GC` of the `mo_async_index_log` table and `mo_async_index_iterations` table.
-- It will clean up the `mo_async_index_log` table for the tables that with `drop_at` is not empty and one day has passed.
-- It will clean up the `mo_async_index_iterations` table for the iterations with smaller `end_at` of a account.
+6. The task periodically handle the `GC` of the `mo_intra_system_change_propagation_log` table.
+- It will clean up the `mo_intra_system_change_propagation_log` table for the tables that with `drop_at` is not empty and one day has passed.
 - It could be very low frequency.
 
 
