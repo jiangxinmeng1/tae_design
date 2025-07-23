@@ -105,8 +105,9 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 
 6. The task periodically handle the `GC` of the `mo_intra_system_change_propagation_log` table.
 - It will clean up the `mo_intra_system_change_propagation_log` table for the tables that with `drop_at` is not empty and one day has passed.
-- It could be very low frequency.
+- GC runs once every hour.
 
+7. If the table has no new data, only the in-memory watermark is updated; the `mo_intra_system_change_propagation_log` will not be updated. After a restart, the system will query for updates after this timestamp. To avoid querying very old data, the backend updates all watermarks every hour.
 
 ## Interface
 ```golang
