@@ -1,11 +1,11 @@
-- Update Async Index Design
+- Intra-System Change Propagation Design
 - Status: Draft
 - Start Date: 2025-06-18
 - Author: [XuPeng](https://github.com/XuPeng-SH)
 
 # Design Goals
 
-This document describes the design of the **Update Async Index** feature in the **MatrixOne DBMS**. Traditionally, the index is updated synchronously, which means the index is updated after the data is committed (Strong consistency). However, in some cases, the index update is not critical, and the data can be committed without waiting for the index update to complete(Weak consistency). This feature is designed to support this scenario.
+This document describes the design of the **Intra-System Change Propagation** feature in the **MatrixOne DBMS**. Traditionally, the index is updated synchronously, which means the index is updated after the data is committed (Strong consistency). However, in some cases, the index update is not critical, and the data can be committed without waiting for the index update to complete(Weak consistency). This feature is designed to support this scenario.
 
 # Design Overview
 
@@ -25,7 +25,7 @@ Full-text and vector indexes are good examples.
 
 ## Design
 
-1. Intra system change propagation is a task per tenant. The following design is based on this assumption.
+1. Intra system change propagation is a daemon task per tenant. The following design is based on this assumption.
 
 2. A new table `mo_intra_system_change_propagation_log` is added to record the change propagation.
 ```sql
@@ -51,11 +51,11 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 - To ensure that the transaction to register or unregister a job has been committed before registering the index in memory, it subscribes to the logtail of `mo_intra_system_change_propagation_log`.It waits for the logtail to deliver the insert or delete information.
 - There can be multiple jobs on a table, distinguished by their job names.
 
-- A newly registered job trigger a iteration(i.e. a sychronized task) immediately: 1.If there are no other indexes on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this task may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
+- A newly registered job trigger a iteration(i.e. a sychronization) immediately: 1.If there are no other indexes on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this iteration may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
 
 3. Every `10 seconds`, executor scan jobs and tables in memory and trigger iterations.
 
-- It filters out the tables that meet the criteria and checks for updates. If there are updates, data synchronization is triggered. The iteration task is passed to the executor.
+- It filters out the tables that meet the criteria and checks for updates. If there are updates, data synchronization is triggered. The iteration is passed to the executor.
 - Jobs on the same table try to maintain consistent watermarks so they can be synchronized together.It is also possible to configure a job to synchronize independently, so it will not be blocked by other jobs.
 
 - It skip jobs with watermark of 0, which are newly created jobs and iterations have already been triggered.
@@ -69,7 +69,7 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
    Some indexes may fall behind others on the same table: 1.This happens because during the initial full sync of a new index, other indexes on the table might continue to update, causing this index to lag behind. 2.It may also happen if multiple indexes are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging index is selected at a time to catch up to the table's maximum watermark. These lagging indexes should be few in number and can quickly be brought into alignment with the table's overall watermark.
 
 - Always Update Job Config
-    Always update the watermark for each job. Each job has its own iteration.
+    Always update the watermark for each job. Each job has its own iteration. Always Update Job Config is suitable for jobs with higher performance requirements. It consumes more resources.
 
 - Timed Job Config
     TimedJobConfig is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
@@ -97,7 +97,7 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
   Receives batch               Receives batch   Receives batch
 
 ```
-- Each index corresponds to one consumer. Each consumer calls `Next()` to retrieve data, including insert batches and delete batches. Since multiple consumers share the same iteration, the returned insert batch may contain columns for other job as well, so consumers need to distinguish them using `batch.Attr`. Consumers involved in the same iteration can affect each other — if one consumer is slow in processing, the others may get blocked when calling `Next()`.
+- Each job corresponds to one consumer. Each consumer calls `Next()` to retrieve data, including insert batches and delete batches. Since multiple consumers share the same iteration, the returned insert batch may contain columns for other job as well, so consumers need to distinguish them using `batch.Attr`. Consumers involved in the same iteration can affect each other — if one consumer is slow in processing, the others may get blocked when calling `Next()`.
 - When any error occurs, the `error_json` will be updated, which contains the errors from all consumers. Each consumer has an error code and an error message.
 - err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
 - In each iteration, data consumption and watermark updates are placed in the same transaction, so they commit together. Upon restart, the latest watermark can be retrieved, avoiding duplicate data delivery. The initial synchronization involves a large volume of data, so it is not placed in a single transaction. If the process is not completed before a restart, all data will be deleted and the synchronization will restart from scratch.
@@ -112,7 +112,7 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 ## Interface
 ```golang
 // Multiple tables can share a single sinker.
-// Changes to table IDs are not monitored — if a truncate occurs, the task needs to be rebuilt.
+// Changes to table IDs are not monitored — if a truncate occurs, the job needs to be rebuilt.
 type ConsumerInfo struct{
   ConsumerType int8
   TableName string
@@ -120,10 +120,10 @@ type ConsumerInfo struct{
   JobName string
 }
 
-// return true if create, return false if task already exists, return error when error
+// return true if create, return false if job already exists, return error when error
 func RegisterJob(ctx context.Context,cnUUID string,txn client.TxnOperator, pitr_name string, sinkerinfo_json *ConsumerInfo, jobConfig JobConfig)(bool, error)
 
-// return true if delete success, return false if no task found, return error when delete failed.
+// return true if delete success, return false if no job found, return error when delete failed.
 func UnregisterJob(ctx context.Context,cnUUID string,txn client.TxnOperator,sinkinfo *ConsumerInfo) (bool, error)
 
 type JobConfig interface {
@@ -160,17 +160,3 @@ type Consumer interface{
   Consume(context.Context, DataRetriever) error
 }
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
