@@ -25,9 +25,9 @@ Full-text and vector indexes are good examples.
 
 ## Design
 
-1. Update async index is a task per tenant. The following design is based on this assumption.
+1. Intra system change propagation is a task per tenant. The following design is based on this assumption.
 
-2. A new table `mo_intra_system_change_propagation_log` is added to record the async index update information.
+2. A new table `mo_intra_system_change_propagation_log` is added to record the change propagation.
 ```sql
 CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 				account_id INT UNSIGNED NOT NULL,
@@ -45,19 +45,22 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 			);
 
 ```
-- When a table is created with async indexes, a record will be inserted into `mo_intra_system_change_propagation_log` for each async index.
-- When a index is updated, the `last_sync_txn_ts` will be updated.
-- When the index is dropped, the `drop_at` will be updated and the record will be deleted asynchronously.
-- To ensure that the transaction for creating or dropping an index has been committed before registering the index in memory, it subscribes to the logtail of `mo_intra_system_change_propagation_log`.It waits for the logtail to deliver the insert or delete information.
+- When a job is registered, a record will be inserted into `mo_intra_system_change_propagation_log`. Each job corresponds to a consumer and synchronizes data into it.
+- When synchronize change, the `last_sync_txn_ts` will be updated.
+- When a job is unregistered, the `drop_at` will be updated and the record will be deleted asynchronously.
+- To ensure that the transaction to register or unregister a job has been committed before registering the index in memory, it subscribes to the logtail of `mo_intra_system_change_propagation_log`.It waits for the logtail to deliver the insert or delete information.
+- There can be multiple jobs on a table, distinguished by their job names.
 
-3. Every 10 seconds, scan indexes and tables in memory.
+- A newly registered job trigger a iteration(i.e. a sychronized task) immediately: 1.If there are no other indexes on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this task may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
+
+3. Every `10 seconds`, executor scan jobs and tables in memory and trigger iterations.
 
 - It filters out the tables that meet the criteria and checks for updates. If there are updates, data synchronization is triggered. The iteration task is passed to the executor.
-- Indexes on the same table try to maintain consistent watermarks so they can be synchronized together.
+- Jobs on the same table try to maintain consistent watermarks so they can be synchronized together.It is also possible to configure a job to synchronize independently, so it will not be blocked by other jobs.
 
-- If an index has a watermark of 0, it is a newly created index: 1.If there are no other indexes on the table, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this task may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
+- It skip jobs with watermark of 0, which are newly created jobs and iterations have already been triggered.
 
-- Other iterations will be created based on job config:
+- The job configuration controls when iterations are triggered and whether iterations are shared:
 
 - Default Job Config
 
@@ -71,10 +74,11 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 - Timed Job Config
     TimedJobConfig is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
 
+4. Job config is persisted in `mo_intra_system_change_propagation_log`. It can be modified and the changes take effect with a slight delay. For example, users can speed up a job by changing `Default Job Config` to `Always Update Job Config`. Job config can be customized by the customer.
 
-4. After collecting the table list, it starts to update index tables according to the table list, which will be called a `iteration`. 
+5. After collecting the table list, it starts to synchronize data to consumers, which will be called a `iteration`. 
 - If there're too many iterations, they will be executed in multiple executors.
-- Each executor processes one iteration at a time, which includes one table and one or more indexes on that table. The source table is scanned once, and the data is synchronized to all the indexes.
+- Each executor processes one iteration at a time, which includes one table and one or more jobs on that table. The source table is scanned once, and the data is synchronized to all the consumers.
 ```
               +--------------------+
               |   Source Table     |
@@ -93,7 +97,7 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
   Receives batch               Receives batch   Receives batch
 
 ```
-- Each index corresponds to one consumer. Each consumer calls `Next()` to retrieve data, including insert batches and delete batches. Since multiple consumers share the same iteration, the returned insert batch may contain columns for other indexes as well, so consumers need to distinguish them using `batch.Attr`. Consumers involved in the same iteration can affect each other — if one consumer is slow in processing, the others may get blocked when calling `Next()`.
+- Each index corresponds to one consumer. Each consumer calls `Next()` to retrieve data, including insert batches and delete batches. Since multiple consumers share the same iteration, the returned insert batch may contain columns for other job as well, so consumers need to distinguish them using `batch.Attr`. Consumers involved in the same iteration can affect each other — if one consumer is slow in processing, the others may get blocked when calling `Next()`.
 - When any error occurs, the `error_json` will be updated, which contains the errors from all consumers. Each consumer has an error code and an error message.
 - err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
 - In each iteration, data consumption and watermark updates are placed in the same transaction, so they commit together. Upon restart, the latest watermark can be retrieved, avoiding duplicate data delivery. The initial synchronization involves a large volume of data, so it is not placed in a single transaction. If the process is not completed before a restart, all data will be deleted and the synchronization will restart from scratch.
@@ -112,14 +116,27 @@ type ConsumerInfo struct{
   ConsumerType int8
   TableName string
   DBName string
-  IndexName string
+  JobName string
 }
 
 // return true if create, return false if task already exists, return error when error
-func RegisterJob(ctx context.Context,cnUUID string,txn client.TxnOperator, pitr_name string, sinkerinfo_json *ConsumerInfo)(bool, error)
+func RegisterJob(ctx context.Context,cnUUID string,txn client.TxnOperator, pitr_name string, sinkerinfo_json *ConsumerInfo, jobConfig JobConfig)(bool, error)
 
 // return true if delete success, return false if no task found, return error when delete failed.
 func UnregisterJob(ctx context.Context,cnUUID string,txn client.TxnOperator,sinkinfo *ConsumerInfo) (bool, error)
+
+type JobConfig interface {
+        Marshal() ([]byte, error)
+        Unmarshal([]byte) error
+        GetType() uint16
+        Check(
+                otherConsumers []*JobEntry,
+                consumer *JobEntry,
+                now types.TS,
+        ) (
+                ok bool, from, to types.TS, shareIteration bool,
+        )
+}
 
 func NewConsumer(
   cnUUID string,
