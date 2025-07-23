@@ -33,14 +33,14 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 				account_id INT UNSIGNED NOT NULL,
 				table_id BIGINT UNSIGNED NOT NULL,
 				job_name VARCHAR NOT NULL,
-				job_type INT NOT NULL,
+				job_config VARCHAR NOT NULL,
 				column_names VARCHAR NOT NULL,
 				last_sync_txn_ts VARCHAR(32)  NOT NULL,
 				err_code INT NOT NULL,
 				error_msg VARCHAR(255) NOT NULL,
 				info VARCHAR NOT NULL,
 				drop_at DATETIME NULL,
-				consumer_config VARCHAR(255) NULL,
+				consumer_config VARCHAR NULL,
 				primary key(account_id, table_id, job_name)
 			);
 
@@ -55,13 +55,22 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 - It filters out the tables that meet the criteria and checks for updates. If there are updates, data synchronization is triggered. The iteration task is passed to the executor.
 - Indexes on the same table try to maintain consistent watermarks so they can be synchronized together.
 
-- Iterations will be created under the following conditions:
+- If an index has a watermark of 0, it is a newly created index: 1.If there are no other indexes on the table, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this task may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
 
-   If an index has a watermark of 0, it is a newly created index: 1.If there are no other indexes on the table, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this task may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
+- Other iterations will be created based on job config:
+
+- Default Job Config
 
    If all indexes on a table have the same timestamp and there is no running iteration (except for newly created indexes), synchronization occurs from the watermark to the current time.
 
    Some indexes may fall behind others on the same table: 1.This happens because during the initial full sync of a new index, other indexes on the table might continue to update, causing this index to lag behind. 2.It may also happen if multiple indexes are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging index is selected at a time to catch up to the table's maximum watermark. These lagging indexes should be few in number and can quickly be brought into alignment with the table's overall watermark.
+
+- Always Update Job Config
+    Always update the watermark for each job. Each job has its own iteration.
+
+- Timed Job Config
+    TimedJobConfig is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
+
 
 4. After collecting the table list, it starts to update index tables according to the table list, which will be called a `iteration`. 
 - If there're too many iterations, they will be executed in multiple executors.
