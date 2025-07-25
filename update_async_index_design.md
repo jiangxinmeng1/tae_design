@@ -104,7 +104,6 @@ runner先选出候选的iteration，再过滤掉watermark之后没有更新的�
 
 - Every `10 seconds`, executor scan jobs and tables in memory and trigger iterations.
 
-- It filters out the tables that meet the criteria and checks for updates. If there are updates, data synchronization is triggered. The iteration is passed to the executor.
 - Jobs on the same table try to maintain consistent watermarks so they can be synchronized together.It is also possible to configure a job to synchronize independently, so it will not be blocked by other jobs.
 
 - It skip jobs with watermark of 0, which are newly created jobs and iterations have already been triggered.
