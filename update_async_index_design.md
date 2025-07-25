@@ -58,7 +58,7 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 - After synchronize change, `last_sync_txn_ts`,`err_code`,`error_msg` will be updated.
 - Each job can specify different consumers. Users can customize consumers.
 
-### iteration
+### Iteration
 
 ISCP synchronize data to consumers, which will be called a `iteration`. 
 
@@ -92,9 +92,9 @@ To make use of multiple CN nodes, iterations can be executed on any CN via `mo_c
 select mo_ctl('CN', 'ISCP', 'accountID:tableID:index_name1:index_name2...')
 ```
 
-### iscp runner
+### ISCP Runner
 
-A global ISCP runner manages job metadata, triggers iterations , performs GC on `mo_intra_system_change_propagation_log`, and periodically updates watermarks.
+A global ISCP Runner manages job metadata, triggers iterations, performs GC on `mo_intra_system_change_propagation_log`, and periodically updates watermarks.
 
 1. The runner maintains the watermark and error status for all ISCP jobs. It subscribes to `mo_intra_system_change_propagation_log` to detect job insertions, deletions, and updates--ensuring only committed data is received.
 
@@ -130,7 +130,7 @@ A global ISCP runner manages job metadata, triggers iterations , performs GC on 
 
 3. flush watermark
 
- If the table has no new data, only the in-memory watermark is updated; the `mo_intra_system_change_propagation_log` will not be updated. After a restart, the system will query for updates after this timestamp. To avoid querying very old data, the backend updates all watermarks every hour. These updates will be split into DELETE and INSERT statements.
+- If the table has no new data, only the in-memory watermark is updated; the `mo_intra_system_change_propagation_log` will not be updated. After a restart, the system will query for updates after this timestamp. To avoid querying very old data, the backend updates all watermarks every hour. These updates will be split into DELETE and INSERT statements.
 
 * To avoid background transactions that update the watermark from overwriting drop_at updates, the Delete statement includes a condition to ensure `drop_at IS NULL`. 
 
