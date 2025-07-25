@@ -25,9 +25,9 @@ Full-text and vector indexes are good examples.
 
 ## Design
 
-1. Intra system change propagation is a daemon task per tenant. The following design is based on this assumption.
+### mo_intra_system_change_propagation_log
 
-2. A new table `mo_intra_system_change_propagation_log` is added to record the change propagation.
+A new table `mo_intra_system_change_propagation_log` is added to record the change propagation.
 ```sql
 CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 				account_id INT UNSIGNED NOT NULL,
@@ -45,39 +45,20 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 			);
 
 ```
+- There can be multiple jobs on a table, distinguished by job names.
 - When a job is registered, a record will be inserted into `mo_intra_system_change_propagation_log`. Each job corresponds to a consumer and synchronizes data into it.
-- When synchronize change, the `last_sync_txn_ts` will be updated.
 - When a job is unregistered, the `drop_at` will be updated and the record will be deleted asynchronously.
-- To ensure that the transaction to register or unregister a job has been committed before registering the index in memory, it subscribes to the logtail of `mo_intra_system_change_propagation_log`.It waits for the logtail to deliver the insert or delete information.
-- There can be multiple jobs on a table, distinguished by their job names.
 
-- A newly registered job trigger a iteration(i.e. a sychronization) immediately: 1.If there are no other indexes on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this iteration may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
+* 同一个表上反复删除创建name相同的job，上一个job的行还没有gc，用replace into而不是insert into，这样不会报duplicate.
 
-3. Every `10 seconds`, executor scan jobs and tables in memory and trigger iterations.
+- column_names: 为了节省内存，job指定只要某些行。这样consumer不会收到太多不用的行。
+- After synchronize change, `last_sync_txn_ts`,`err_code`,`error_msg` will be updated.
+- 每个job可以指定不同的consumer。用户可以自定义consumer
 
-- It filters out the tables that meet the criteria and checks for updates. If there are updates, data synchronization is triggered. The iteration is passed to the executor.
-- Jobs on the same table try to maintain consistent watermarks so they can be synchronized together.It is also possible to configure a job to synchronize independently, so it will not be blocked by other jobs.
+### iteration
 
-- It skip jobs with watermark of 0, which are newly created jobs and iterations have already been triggered.
+ISCP synchronize data to consumers, which will be called a `iteration`. 
 
-- The job configuration controls when iterations are triggered and whether iterations are shared:
-
-- Default Job Config
-
-   If all indexes on a table have the same timestamp and there is no running iteration (except for newly created indexes), synchronization occurs from the watermark to the current time.
-
-   Some indexes may fall behind others on the same table: 1.This happens because during the initial full sync of a new index, other indexes on the table might continue to update, causing this index to lag behind. 2.It may also happen if multiple indexes are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging index is selected at a time to catch up to the table's maximum watermark. These lagging indexes should be few in number and can quickly be brought into alignment with the table's overall watermark.
-
-- Always Update Job Config
-    Always update the watermark for each job. Each job has its own iteration. Always Update Job Config is suitable for jobs with higher performance requirements. It consumes more resources.
-
-- Timed Job Config
-    TimedJobConfig is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
-
-4. Job config is persisted in `mo_intra_system_change_propagation_log`. It can be modified and the changes take effect with a slight delay. For example, users can speed up a job by changing `Default Job Config` to `Always Update Job Config`. Job config can be customized by the customer.
-
-5. After collecting the table list, it starts to synchronize data to consumers, which will be called a `iteration`. 
-- If there're too many iterations, they will be executed in multiple executors.
 - Each executor processes one iteration at a time, which includes one table and one or more jobs on that table. The source table is scanned once, and the data is synchronized to all the consumers.
 ```
               +--------------------+
@@ -102,12 +83,62 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 - err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
 - In each iteration, data consumption and watermark updates are placed in the same transaction, so they commit together. Upon restart, the latest watermark can be retrieved, avoiding duplicate data delivery. The initial synchronization involves a large volume of data, so it is not placed in a single transaction. If the process is not completed before a restart, all data will be deleted and the synchronization will restart from scratch.
 
+为了利用多个CN的资源，iteration可以在任意CN上执行，通过mo_ctl执行iteration
 
-6. The task periodically handle the `GC` of the `mo_intra_system_change_propagation_log` table.
+```sql
+select mo_ctl('CN', 'ISCP', 'accountID:tableID:index_name1:index_name2...')
+```
+
+### iscp runner
+
+全局有一个iscp runner，管理job的信息，触发iteration交给executor，gc iscp表，定时更新很久没更新的job watermark
+
+1. runner里存了iscp所有job的watermark，error。runner订阅iscp表来知道job的增删改，这样runner收到的数据确定是已提交的。
+
+2. runner触发iteration交给executor。
+
+runner先选出候选的iteration，再过滤掉watermark之后没有更新的表，这些表直接更新内存中的水位。剩下的iteration被交给executor执行
+这些是选择候选iteration和确定from,ts的规则：
+
+- A newly registered job trigger a iteration(i.e. a sychronization) immediately: 1.If there are no other indexes on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this iteration may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
+
+- Every `10 seconds`, executor scan jobs and tables in memory and trigger iterations.
+
+- It filters out the tables that meet the criteria and checks for updates. If there are updates, data synchronization is triggered. The iteration is passed to the executor.
+- Jobs on the same table try to maintain consistent watermarks so they can be synchronized together.It is also possible to configure a job to synchronize independently, so it will not be blocked by other jobs.
+
+- It skip jobs with watermark of 0, which are newly created jobs and iterations have already been triggered.
+
+- The job configuration controls when iterations are triggered and whether iterations are shared:
+
+- Default Job Config
+
+   If all indexes on a table have the same timestamp and there is no running iteration (except for newly created indexes), synchronization occurs from the watermark to the current time.
+
+   Some indexes may fall behind others on the same table: 1.This happens because during the initial full sync of a new index, other indexes on the table might continue to update, causing this index to lag behind. 2.It may also happen if multiple indexes are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging index is selected at a time to catch up to the table's maximum watermark. These lagging indexes should be few in number and can quickly be brought into alignment with the table's overall watermark.
+
+- Always Update Job Config
+    Always update the watermark for each job. Each job has its own iteration. Always Update Job Config is suitable for jobs with higher performance requirements. It consumes more resources.
+
+- Timed Job Config
+    TimedJobConfig is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
+
+* 查询table是否改变时fromTS很旧
+在选table做iteration前会检查这个table在当前watermark后是否有更新。iteration可能很慢，这个ts可能会小于最早能查到的记录。遇到这样的表，就跳过检查直接做iteration.
+
+3. flush watermark
+
+ If the table has no new data, only the in-memory watermark is updated; the `mo_intra_system_change_propagation_log` will not be updated. After a restart, the system will query for updates after this timestamp. To avoid querying very old data, the backend updates all watermarks every hour.
+
+* 后台刷watermark覆盖dropts: 用delete和insert
+为了防止后台刷watermark的事务覆盖更新drop_at的事务。在delete语句里限制drop_at为空，这样如果遇到已经drop的job，会报dupliacate，回滚事务。
+
+4. gc
+ The task periodically handle the `GC` of the `mo_intra_system_change_propagation_log` table.
 - It will clean up the `mo_intra_system_change_propagation_log` table for the tables that with `drop_at` is not empty and one day has passed.
 - GC runs once every hour.
 
-7. If the table has no new data, only the in-memory watermark is updated; the `mo_intra_system_change_propagation_log` will not be updated. After a restart, the system will query for updates after this timestamp. To avoid querying very old data, the backend updates all watermarks every hour.
+4. Job config is persisted in `mo_intra_system_change_propagation_log`. It can be modified and the changes take effect with a slight delay. For example, users can speed up a job by changing `Default Job Config` to `Always Update Job Config`. Job config can be customized by the customer.
 
 ## Interface
 ```golang
