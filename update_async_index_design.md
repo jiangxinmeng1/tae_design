@@ -112,17 +112,19 @@ A global ISCP Runner manages job metadata, triggers iterations, performs GC on `
 
 - The job configuration controls when iterations are triggered and whether iterations are shared:
 
-- Default Job Config
+  - Default Job Config
 
-   If all jobs on a table have the same timestamp and there is no running iteration (except for newly created jobs), synchronization occurs from the watermark to the current time.
+    If all jobs on a table have the same timestamp and there is no running iteration (except for newly created jobs), synchronization occurs from the watermark to the current time.
 
-   Some jobs may fall behind others on the same table: 1.This happens because during the initial full sync of a new job, other jobs on the table might continue to update, causing this job to lag behind. 2.It may also happen if multiple jobs are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging job is selected at a time to catch up to the table's maximum watermark. These lagging jobs should be few in number and can quickly be brought into alignment with the table's overall watermark.
+    Some jobs may fall behind others on the same table: 1.This happens because during the initial full sync of a new job, other jobs on the table might continue to update, causing this job to lag behind. 2.It may also happen if multiple jobs are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging job is selected at a time to catch up to the table's maximum watermark. These lagging jobs should be few in number and can quickly be brought into alignment with the table's overall watermark.
 
-- Always Update Job Config
-    Always update the watermark for each job. Each job has its own iteration. Always Update Job Config is suitable for jobs with higher performance requirements. It consumes more resources.
+  - Always Update Job Config
 
-- Timed Job Config
-    TimedJobConfig is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
+      Always update the watermark for each job. Each job has its own iteration. Always Update Job Config is suitable for jobs with higher performance requirements. It consumes more resources.
+
+  - Timed Job Config
+
+      TimedJobConfig is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
 
 * Job config is persisted in `mo_intra_system_change_propagation_log`. It can be modified and the changes take effect with a slight delay. For example, users can speed up a job by changing `Default Job Config` to `Always Update Job Config`. Job config can be customized by the customer.
 
