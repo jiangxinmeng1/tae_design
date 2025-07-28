@@ -49,20 +49,20 @@ CREATE TABLE mo_catalog.mo_intra_system_change_propagation_log (
 - When a job is registered, a record will be inserted into `mo_intra_system_change_propagation_log`. Each job corresponds to a consumer and synchronizes data into it.
 - When a job is unregistered, the `drop_at` will be updated and the record will be deleted asynchronously.
 
-* When repeatedly dropping and creating jobs with the same name on the same table, if the rows of the previous job haven't been garbage collected it reports duplicate.We using REPLACE INTO instead of INSERT INTO avoids duplicate errors.
+* When repeatedly dropping and creating jobs with the same name on the same table, if the rows of the previous job haven't been garbage collected it reports duplicate. We using REPLACE INTO instead of INSERT INTO avoids duplicate errors.
 
-- job_config: The mode of job synchronization, e.g., triggering frequency, whether the job shares executor with other jobs, etc.
+- `job_config`: The mode of job synchronization, e.g. triggering frequency, whether the job shares executor with other jobs, etc.
 
-- column_names: To reduce memory usage, each job can specify column names. It collects necessary columns instead of all columns.
+- `column_names`: To reduce memory usage, each job can specify column names. It collects necessary columns instead of all columns.
 
 - After synchronize change, `last_sync_txn_ts`,`err_code`,`error_msg` will be updated.
 - Each job can specify different consumers. Users can customize consumers.
 
 ### Iteration
 
-ISCP synchronize data to consumers, which will be called a `iteration`. 
+In a `iteration`, ISCP synchronize data to consumers.
 
-- Each executor processes one iteration at a time, which includes one table and one or more jobs on that table. The source table is scanned once, and the data is synchronized to all the consumers.
+- Each iteration at a time includes one table and one or more jobs on that table. The source table is scanned once, and the data is synchronized to all the consumers.
 ```
               +--------------------+
               |   Source Table     |
@@ -86,11 +86,11 @@ ISCP synchronize data to consumers, which will be called a `iteration`.
 - err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
 - In each iteration, data consumption and watermark updates are placed in the same transaction, so they commit together. Upon restart, the latest watermark can be retrieved, avoiding duplicate data delivery. The initial synchronization involves a large volume of data, so it is not placed in a single transaction. If the process is not completed before a restart, all data will be deleted and the synchronization will restart from scratch.
 
-To make use of multiple CN nodes, iterations can be executed on any CN via `mo_ctl`:
+- To make use of multiple CN nodes, iterations can be executed on any CN via `mo_ctl`:
 
-```sql
-select mo_ctl('CN', 'ISCP', 'accountID:tableID:index_name1:index_name2...')
-```
+  ```sql
+  select mo_ctl('CN', 'ISCP', 'accountID:tableID:index_name1:index_name2...')
+  ```
 
 ### ISCP Runner
 
