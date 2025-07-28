@@ -89,7 +89,7 @@ In a `iteration`, ISCP synchronize data to consumers.
 - To make use of multiple CN nodes, iterations can be executed on any CN via `mo_ctl`:
 
   ```sql
-  select mo_ctl('CN', 'ISCP', 'accountID:tableID:index_name1:index_name2...')
+  select mo_ctl('CN', 'ISCP', 'accountID:tableID:job_name1:job_name2...')
   ```
 
 ### ISCP Runner
@@ -104,7 +104,7 @@ A global ISCP Runner manages job metadata, triggers iterations, performs GC on `
 
 - The following are the rules for selecting candidate iterations and determining `from_ts`, `to_ts`:
 
-- A newly registered job trigger a iteration(i.e. a sychronization) immediately without checking: 1.If there are no other indexes on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already indexes on the table, it synchronizes data from timestamp 0 to the watermark of the other indexes, so that they can be synchronized together in the future. Since this iteration may take a long time, other indexes on the table will continue updating normally to avoid being blocked.
+- A newly registered job trigger a iteration(i.e. a sychronization) immediately without checking: 1.If there are no other jobs on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already jobs on the table, it synchronizes data from timestamp 0 to the watermark of the other jobs, so that they can be synchronized together in the future. Since this iteration may take a long time, other jobs on the table will continue updating normally to avoid being blocked.
 
 - For jobs that have already completed their first iteration, the runner scans them every 10 seconds to select candidates. Followings are the rules:
 
@@ -114,9 +114,9 @@ A global ISCP Runner manages job metadata, triggers iterations, performs GC on `
 
 - Default Job Config
 
-   If all indexes on a table have the same timestamp and there is no running iteration (except for newly created indexes), synchronization occurs from the watermark to the current time.
+   If all jobs on a table have the same timestamp and there is no running iteration (except for newly created jobs), synchronization occurs from the watermark to the current time.
 
-   Some indexes may fall behind others on the same table: 1.This happens because during the initial full sync of a new index, other indexes on the table might continue to update, causing this index to lag behind. 2.It may also happen if multiple indexes are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging index is selected at a time to catch up to the table's maximum watermark. These lagging indexes should be few in number and can quickly be brought into alignment with the table's overall watermark.
+   Some jobs may fall behind others on the same table: 1.This happens because during the initial full sync of a new job, other jobs on the table might continue to update, causing this job to lag behind. 2.It may also happen if multiple jobs are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging job is selected at a time to catch up to the table's maximum watermark. These lagging jobs should be few in number and can quickly be brought into alignment with the table's overall watermark.
 
 - Always Update Job Config
     Always update the watermark for each job. Each job has its own iteration. Always Update Job Config is suitable for jobs with higher performance requirements. It consumes more resources.
