@@ -104,29 +104,29 @@ A global ISCP Runner manages job metadata, triggers iterations, performs GC on `
 
 - The following are the rules for selecting candidate iterations and determining `from_ts`, `to_ts`:
 
-- A newly registered job trigger a iteration(i.e. a sychronization) immediately without checking: 1.If there are no other jobs on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already jobs on the table, it synchronizes data from timestamp 0 to the watermark of the other jobs, so that they can be synchronized together in the future. Since this iteration may take a long time, other jobs on the table will continue updating normally to avoid being blocked.
+  - A newly registered job trigger a iteration(i.e. a sychronization) immediately without checking: 1.If there are no other jobs on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already jobs on the table, it synchronizes data from timestamp 0 to the watermark of the other jobs, so that they can be synchronized together in the future. Since this iteration may take a long time, other jobs on the table will continue updating normally to avoid being blocked.
 
-- For jobs that have already completed their first iteration, the runner scans them every 10 seconds to select candidates. Followings are the rules:
+  - For jobs that have already completed their first iteration, the runner scans them every 10 seconds to select candidates. Followings are the rules:
 
-- Jobs on the same table try to maintain consistent watermarks so they can be synchronized together.It is also possible to configure a job to synchronize independently, so it will not be blocked by other jobs.
+  - Jobs on the same table try to maintain consistent watermarks so they can be synchronized together.It is also possible to configure a job to synchronize independently, so it will not be blocked by other jobs.
 
-- The job configuration controls when iterations are triggered and whether iterations are shared:
+  - The job configuration controls when iterations are triggered and whether iterations are shared:
 
-  - Default Job Config
+    - Default Job Config
 
-    If all jobs on a table have the same timestamp and there is no running iteration (except for newly created jobs), synchronization occurs from the watermark to the current time.
+      If all jobs on a table have the same timestamp and there is no running iteration (except for newly created jobs), synchronization occurs from the watermark to the current time.
 
-    Some jobs may fall behind others on the same table: 1.This happens because during the initial full sync of a new job, other jobs on the table might continue to update, causing this job to lag behind. 2.It may also happen if multiple jobs are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging job is selected at a time to catch up to the table's maximum watermark. These lagging jobs should be few in number and can quickly be brought into alignment with the table's overall watermark.
+      Some jobs may fall behind others on the same table: 1.This happens because during the initial full sync of a new job, other jobs on the table might continue to update, causing this job to lag behind. 2.It may also happen if multiple jobs are created in a row on a new table, and each gets a different initial watermark. In such cases, one lagging job is selected at a time to catch up to the table's maximum watermark. These lagging jobs should be few in number and can quickly be brought into alignment with the table's overall watermark.
 
-  - Always Update Job Config
+    - Always Update Job Config
 
-      Always update the watermark for each job. Each job has its own iteration. Always Update Job Config is suitable for jobs with higher performance requirements. It consumes more resources.
+        Always update the watermark for each job. Each job has its own iteration. Always Update Job Config is suitable for jobs with higher performance requirements. It consumes more resources.
 
-  - Timed Job Config
+    - Timed Job Config
 
-      TimedJobConfig is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
+        TimedJobConfig is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
 
-* Job config is persisted in `mo_intra_system_change_propagation_log`. It can be modified and the changes take effect with a slight delay. For example, users can speed up a job by changing `Default Job Config` to `Always Update Job Config`. Job config can be customized by the customer.
+  * Job config is persisted in `mo_intra_system_change_propagation_log`. It can be modified and the changes take effect with a slight delay. For example, users can speed up a job by changing `Default Job Config` to `Always Update Job Config`. Job config can be customized by the customer.
 
 * Iteration can be slow, so `from_ts` may be earlier than the earliest available records. When checking whether a table has changed, if the `from_ts` is too old (and the table's updates are no longer queryable due to TTL), skip the check and proceed with iteration directly.
 
