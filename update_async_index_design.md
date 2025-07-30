@@ -50,13 +50,13 @@ Full-text and vector indexes are good examples.
 +---------------------------------+
 ```
 
-用户可以register/unregister job（1），更新job spec（4），这些更新都先记录在mo_iscp_log中。
-Runner管理内存中的job状态。Runner订阅mo_iscp_log来获取job的更新。它决定什么时候触发iteration（i.e.同步任务）。
-Scheduler根据优先级做iteration。Scheduler和Runner中iteration的状态更新也记录在mo_iscp_log中。
+Users can register/unregister jobs (1) and update job specs (4). All updates are first recorded in the `mo_iscp_log` table.
+The Runner manages the in-memory job status. It subscribes to `mo_iscp_log` to receive job updates and decides when to trigger an iteration (i.e. a sync task).
+The Scheduler performs iterations according to `job_spec`. The status changes of jobs in Runner and Scheduler are also recorded in `mo_iscp_log`. 
 
 ### mo_iscp_log
 
-A new table `mo_iscp_log` is added to record the change propagation.每行对应一个job
+A new table `mo_iscp_log` is added to record the change propagation. Each row corresponds to a job.
 ```sql
 CREATE TABLE mo_catalog.mo_iscp_log (
 				account_id INT UNSIGNED NOT NULL,
@@ -70,35 +70,35 @@ CREATE TABLE mo_catalog.mo_iscp_log (
 			);
 
 ```
-- 同一个租户下用JobID来区分Job，包含DBName,TableName,JobName。注册/注销时JobID转化成tableid和jobname存到表里。
-  ISCP不处理表ID变化，如果表ID改变（例如truncate），要重新注册Job。
-```golang
-    type JobID struct{
-      DBName string,
-      TableName string,
-      JobName string,
-    }
-```
-- JobSpec
-job spec中包含TriggerSpec和TriggerSpec。TriggerSpec决定runner触发iteration的规则, ExecutionSpec决定Scheduler调度和执行时的行为。
-```golang
-    type JobSpec struct{
-      TriggerSpec
-      ExecutionSpec
-    }
-```
+- Within the same tenant, jobs are identified by `JobID`, which consists of DBName, TableName and JobName. 
+  During registration/unregistration, JobID is converted to table_id and job_name and stored in the table.
+  ISCP does not handle table ID changes. If the table ID changes (e.g., due to TRUNCATE), the job must be re-registered.
+  ```golang
+      type JobID struct{
+        DBName string,
+        TableName string,
+        JobName string,
+      }
+  ```
+- `JobSpec` includes TriggerSpec and IterationDetail.
+  `TriggerSpec` defines the rules for the Runner to trigger an iteration.
+  `IterationDetail` defines how the Scheduler schedules and executes iterations.
+  ```golang
+      type JobSpec struct{
+        TriggerSpec
+        IterationDetail
+      }
+  ```
 
-- JobStatus
-  JobStatus记录job的最新iteration的信息。
+- `JobStatus` records status information about the job and its latest iteration.
 
-
-#### 注册/注销job，更新JobSpec
-- 这些操作先写入iscp表，之后通过订阅传给ISCP Runner.
-- When a job is registered, a record will be inserted into `mo_iscp_log`.
-- 注册时会记录当前时间作为create time.
+#### Register Job, Unregeister Job
+- All operations are first written to the `mo_iscp_log` and then propagated to the ISCP Runner through subscriptions.
+- When a job is registered, a record will be inserted into `mo_iscp_log`. 
+  When registering a job, the current time is recorded as its  `create_time`.
 - When a job is unregistered, the `drop_at` will be updated and the record will be deleted asynchronously. When repeatedly dropping and creating jobs with the same name on the same table, if the rows of the previous job haven't been garbage collected it reports duplicate. We using REPLACE INTO instead of INSERT INTO avoids duplicate errors.
   ```golang
-    // ctx里有account id
+    // ctx contains the account ID.
     // return true if create, return false if job already exists, return error when error
     func RegisterJob(ctx context.Context, txn client.TxnOperator, pitr_name string, jobID *JobID, jobSpec *JobSpec)(bool, error)
     // return true if delete success, return false if no job found, return error when delete failed.
@@ -110,40 +110,28 @@ job spec中包含TriggerSpec和TriggerSpec。TriggerSpec决定runner触发iterat
 A global ISCP Runner manages job metadata, triggers iterations, performs GC on `mo_iscp_log`, and periodically updates watermarks.
 The runner maintains job_spec and job_status for all ISCP jobs. It subscribes to `mo_iscp_log` to detect job insertions, deletions, and updates--ensuring only committed data is received.
 
-这些时runner触发iteraton的步骤：
+Runner triggers an iteration through the following steps:
 
-1. The runner first selects candidate iterations
-2. filters out tables that have no updates beyond their current watermark.
-3.1 For those tables, it directly updates the in-memory watermark. 
-3.2 Iterations for updated tables are send to executors.
+- The runner first selects candidate iterations
+- filters out tables that have no updates beyond their current watermark.
+
+- For those tables, it directly updates the in-memory watermark. 
+
+- Iterations for updated tables are send to schedulers.
 
 ```
-+---------------------+
-|      Runner         |
-| 1. Selects          |
-|   candidates        |
-+---------------------+
+1. Selects candidates  
            |
            v
-+---------------------+
-| 2. Watermark Filter |
-|   - Skips tables    |
-|     with no updates |
-|     (updates memory)|
-+---------------------+
+2. Filter tables with no updates --[No updates]--> 3.1 Update In-Memory Watermark
            |
-           |--[No updates]--> 3.1 Update In-Memory Watermark
+      [ Updated ]
            |
            v
-+---------------------+
-| 3.2 Send to         |
-|    Executors        |
-|   (Only updated     |
-|    tables)          |
-+---------------------+
+3.2 Send to Sheduler 
 ```
 
-#### 选出候选的iteration
+#### Select candidate iterations
 
 - A newly registered job trigger a iteration(i.e. a sychronization) immediately without checking: 1.If there are no other jobs on the table or it syncronize independently, it synchronizes data from timestamp 0 to the current time.2.If there are already jobs on the table, it synchronizes data from timestamp 0 to the watermark of the other jobs, so that they can be synchronized together in the future. Since this iteration may take a long time, other jobs on the table will continue updating normally to avoid being blocked.
 
@@ -184,117 +172,92 @@ The runner maintains job_spec and job_status for all ISCP jobs. It subscribes to
 
         ```
         Periodic Job Config is a job configuration that only updates when the time difference between now and watermark exceeds a specified duration.
-        可以配置是否共享iteration.
+        It can be configured to share iterations
 
-  - TiggerSpec can be modified. For example, users can speed up a job by changing `Default Job Config` to `Greedy Job Config`. Job config can be customized by the customer.
+    - TriggerSpec can be customized by the customer.
+
+- User can modify TriggerSpec. For example, users can speed up a job by changing `Default Job Config` to `Greedy Job Config`. 
+  TriggerSpec is modified together with IterationDetail.
+  The incoming JobSpec will overwrite the current one. Any empty fields in the new JobSpec will be filled with values from the current JobSpec.
+  For TriggerSpec, it will take effect after current iteration completes.
+  For IterationDetail, they can optionally interrupt currently queued or running iterations so the new spec takes effect immediately.
   ```golang
     func UpdateJobSpec(ctx context.Context, txn client.TxnOperator, jobID *JobID, jobSpec *JobSpec, opts *JobUpdateOptions)(error)
   ```
-- 用户可以修改JobSpec。传入的JobSpec会覆盖原有的JobSpec，其中的空值会用原有的JobSpec覆盖。
-  可以通过JobUpdateOptions控制更新时的行为，例如是否打断scheduler中Pending的iteration。
-  如果已经交给scheduler，这个配置要等iteration做完才生效。
 
-####
-检查table是否有change
+#### Filter Tables without Updates
 
 * Iteration can be slow, so `from_ts` may be earlier than the earliest available records. When checking whether a table has changed, if the `from_ts` is too old (and the table's updates are no longer queryable due to TTL), skip the check and proceed with iteration directly.
 
-####
-3. flush watermark
+#### Flush Watermark
 
 - If the table has no new data, only the in-memory watermark is updated; the `mo_iscp_log` will not be updated. After a restart, the system will query for updates after this timestamp. To avoid querying very old data, the backend updates all watermarks every hour. These updates will be split into DELETE and INSERT statements.
 
 * To avoid background transactions that update the watermark from overwriting drop_at updates, the Delete statement includes a condition to ensure `drop_at IS NULL`. 
 
-####
-4. gc
+#### GC
  The task periodically handle the `GC` of the `mo_iscp_log` table.
 - It will clean up the `mo_iscp_log` table for the tables that with `drop_at` is not empty and one day has passed.
 - GC runs once every hour.
 
-### scheduler
+### Scheduler
 
-
-- 查询worker里等待和正在做的iteration，（job_name,state,from,to,startat,endat）
-
-- 更改排队的iteration的优先级，取消正在排队的iteration。
-
-```golang
-type ExecutionSpec struct{
-  Priority int
-  ConsumerInfo{
-    ConsumerType int8
-    TableName string
-    DBName string
+- The Scheduler, upon receiving an iteration, places it in a queue waiting for an available worker.
+  It uses IterationDetail: `priority` determines which iteration runs first.
+  `ConsumerInfo` specifies how to consume synchronized data.
+  ```golang
+  type IterationDetail struct{
+    Priority int
+    JobID JobID
+    ConsumerInfo ConsumerInfo
+    From types.TS
+    To Types.TS
   }
-}
-```
+  ```
 
-- scheduler根据Priority调度worker。
+- The Scheduler updates the JobStatus in the `mo_iscp_log` when an iteration starts and when it completes.
 
 ```golang
-type IterationStatus struct {
-  State int8 // running, completed, error, canceled, pending
+type JobStatus struct {
+  State int8
+  Watermark types.TS
 
-  ErrorCode int
-  ErrorMsg string
-
-//如果running，就是现在在做的from,to。不然就是上次的from,to
-// data的from,to
   FromTS types.TS
   ToTS types.TS
-  //iteration的开始结束
   StartAt types.TS
   EndAt types.TS
-  CNUUID string//执行的cn
-
+  ErrorCode int
+  ErrorMsg string
 }
 ```
-- state: 
-pending: scheduler收到了，正在排队等worker闲下来处理这个iteration
-running: worker正在执行的iteration
-canceled: 被取消的iteration。例如：更新jobSpec的时候，可以配置打断正在做的iteration。
-error: 发生永久错误的iteration。
-completed: 已完成iteration。runner会安排job做下一个iteration。刚注册的job初始化的时候会把state设置成complete，方便接下来做iteration。
+- Job states include: 
+  `pending`: Scheduler has received the iteration and is waiting for an idle worker. 
+  `running`: The iteration is currently being executed by a worker.
+  `canceled`: The iteration was canceled (e.g. due to a job spec update configured to interrupt ongoing iterations).
+  `error`: The iteration failed with a permanent error.
+  `completed`: The iteration finished successfully. The Runner will schedule the next iteration.
+  When a job is first registered, its initial state is set to  `completed` to allow the Runner to begin iteration.
 
+- `watermark`: the progress marker for job updates, i.e. the `toTS` of its last successful iteration.
 
+- `FromTS`, `ToTS`, `StartAt`, `EndAt`, `ErrorCode`, `ErrorMsg` records status of job's last iteration.
+  `FromTS` and `ToTS` mark the time range of the data being synchronized.
+  `StartAt` and `EndAt` mark when the iteration started and finished.
+  `ErrorCode` and `ErrorMsg` describe the result of the last iteration.
 
+####
+Users can query job status by JobID, or filter jobs by state.
+```golang
+func GetJobStatus(ctx context.Context, jobID *JobID)(jobStatus *JobStatus,err error)
+func GetJobCount(state int8) ([]JobID,[]JobStatus)
+```
 
-### Iteration
+####
+Scheduler iterations can be canceled. e.g. on shutdown all iterations are canceled.
+When users update a job spec, they can optionally interrupt currently queued or running iterations so the new spec takes effect immediately.
 
-1. 更新job status
-
-2. 同步数据
-
-3. 更新jobstatus
-
+#### Iteration
 In a `iteration`, ISCP synchronize data to consumers.
-
-- Each iteration at a time includes one table and one or more jobs on that table. The source table is scanned once, and the data is synchronized to all the consumers.
-```
-              +--------------------+
-              |   Source Table     |
-              |  data [from, to]   |
-              +--------+-----------+
-                       |
-               [Read a data batch]
-                       |
-        +--------------+--------------+--------------+
-        |                             |              |
-   +----v----+                  +-----v----+    +-----v----+
-   |Consumer1|                  |Consumer2 |    |Consumer3 |
-   | .Next() |                  | .Next()  |    | .Next()  |
-   +---------+                  +----------+    +----------+
-        |                             |              |
-  Receives batch               Receives batch   Receives batch
-
-```
-- Each job corresponds to one consumer. Each consumer calls `Next()` to retrieve data, including insert batches and delete batches. Since multiple consumers share the same iteration, the returned insert batch may contain columns for other job as well, so consumers need to distinguish them using `batch.Attr`. Consumers involved in the same iteration can affect each other — if one consumer is slow in processing, the others may get blocked when calling `Next()`.
-- When any error occurs, the `error_json` will be updated, which contains the errors from all consumers. Each consumer has an error code and an error message.
-- err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
-- In each iteration, data consumption and watermark updates are placed in the same transaction, so they commit together. Upon restart, the latest watermark can be retrieved, avoiding duplicate data delivery. The initial synchronization involves a large volume of data, so it is not placed in a single transaction. If the process is not completed before a restart, all data will be deleted and the synchronization will restart from scratch.
-
-- After synchronize change, `last_sync_txn_ts`,`err_code`,`error_msg` will be updated.
 - Each job can specify different consumers. Users can customize consumers.
 ```golang
 // insertBatch: all columns+ts
@@ -322,10 +285,35 @@ type Consumer interface{
   Consume(context.Context, DataRetriever) error
 }
 
-
 func NewConsumer(
   cnUUID string,
   tableDef *plan.TableDef,
   consumerInfo *ConsumerInfo,
 )(Consumer,error)
 ```
+- Each iteration at a time includes one table and one or more jobs on that table. The source table is scanned once, and the data is synchronized to all the consumers.
+```
+              +--------------------+
+              |   Source Table     |
+              |  data [from, to]   |
+              +--------+-----------+
+                       |
+               [Read a data batch]
+                       |
+        +--------------+--------------+--------------+
+        |                             |              |
+   +----v----+                  +-----v----+    +-----v----+
+   |Consumer1|                  |Consumer2 |    |Consumer3 |
+   | .Next() |                  | .Next()  |    | .Next()  |
+   +---------+                  +----------+    +----------+
+        |                             |              |
+  Receives batch               Receives batch   Receives batch
+
+```
+- Each job corresponds to one consumer. Each consumer calls `Next()` to retrieve data, including insert batches and delete batches. Since multiple consumers share the same iteration, the returned insert batch may contain columns for other job as well, so consumers need to distinguish them using `batch.Attr`. Consumers involved in the same iteration can affect each other — if one consumer is slow in processing, the others may get blocked when calling `Next()`.
+- When any error occurs, it will be stored in `error_code` and `error_msg`, which contains the errors from all consumers. Each consumer has an error code and an error message.
+- err_code: 0 means success, 1-9999 means temporary error, which will be retried in the next iteration, 10000+ means permanent error, which need to be repaired manually.
+- In each iteration, data consumption and watermark updates are placed in the same transaction, so they commit together. Upon restart, the latest watermark can be retrieved, avoiding duplicate data delivery. The initial synchronization involves a large volume of data, so it is not placed in a single transaction. If the process is not completed before a restart, all data will be deleted and the synchronization will restart from scratch.
+
+- After synchronize change,`state`, `watermark`,`err_code`,`error_msg` will be updated.
+
