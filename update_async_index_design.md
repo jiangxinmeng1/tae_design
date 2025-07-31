@@ -63,8 +63,8 @@ CREATE TABLE mo_catalog.mo_iscp_log (
 				table_id BIGINT UNSIGNED NOT NULL,
 				job_name VARCHAR NOT NULL,
 				job_spec JSON NOT NULL,
-        job_status JSON NOT NULL,
-        create_at TIMESTAMP NOT NULL,
+				job_status JSON NOT NULL,
+				create_at TIMESTAMP NOT NULL,
 				drop_at TIMESTAMP NULL,
 				primary key(account_id, table_id, job_name)
 			);
