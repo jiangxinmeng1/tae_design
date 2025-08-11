@@ -222,8 +222,6 @@ Runner triggers an iteration through the following steps:
     Priority int
     JobID JobID
     ConsumerInfo ConsumerInfo
-    From types.TS
-    To Types.TS
   }
   ```
 
