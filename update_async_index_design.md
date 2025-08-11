@@ -63,9 +63,11 @@ CREATE TABLE mo_catalog.mo_iscp_log (
 				table_id BIGINT UNSIGNED NOT NULL,
 				job_name VARCHAR NOT NULL,
 				job_spec JSON NOT NULL,
+				job_state TINYINT NOT NULL,
+				watermark VARCHAR NOT NULL,
 				job_status JSON NOT NULL,
 				create_at TIMESTAMP NOT NULL,
-				drop_at TIMESTAMP NULL,
+				drop_at TIMESTAMP NULL, 
 				primary key(account_id, table_id, job_name)
 			);
 
@@ -91,6 +93,16 @@ CREATE TABLE mo_catalog.mo_iscp_log (
   ```
 
 - `JobStatus` records status information about the job and its latest iteration.
+
+- `job_state` include: 
+  `pending`: Scheduler has received the iteration and is waiting for an idle worker. 
+  `running`: The iteration is currently being executed by a worker.
+  `canceled`: The iteration was canceled (e.g. due to a job spec update configured to interrupt ongoing iterations).
+  `error`: The iteration failed with a permanent error.
+  `completed`: The iteration finished successfully. The Runner will schedule the next iteration.
+  When a job is first registered, its initial state is set to  `completed` to allow the Runner to begin iteration.
+
+- `watermark`: the progress marker for job updates, i.e. the `toTS` of its last successful iteration.
 
 #### Register Job, Unregeister Job
 - All operations are first written to the `mo_iscp_log` and then propagated to the ISCP Runner through subscriptions.
@@ -219,9 +231,6 @@ Runner triggers an iteration through the following steps:
 
 ```golang
 type JobStatus struct {
-  State int8
-  Watermark types.TS
-
   FromTS types.TS
   ToTS types.TS
   StartAt types.TS
@@ -230,17 +239,7 @@ type JobStatus struct {
   ErrorMsg string
 }
 ```
-- Job states include: 
-  `pending`: Scheduler has received the iteration and is waiting for an idle worker. 
-  `running`: The iteration is currently being executed by a worker.
-  `canceled`: The iteration was canceled (e.g. due to a job spec update configured to interrupt ongoing iterations).
-  `error`: The iteration failed with a permanent error.
-  `completed`: The iteration finished successfully. The Runner will schedule the next iteration.
-  When a job is first registered, its initial state is set to  `completed` to allow the Runner to begin iteration.
-
-- `watermark`: the progress marker for job updates, i.e. the `toTS` of its last successful iteration.
-
-- `FromTS`, `ToTS`, `StartAt`, `EndAt`, `ErrorCode`, `ErrorMsg` records status of job's last iteration.
+- `JobStatus` records status of job's last iteration.
   `FromTS` and `ToTS` mark the time range of the data being synchronized.
   `StartAt` and `EndAt` mark when the iteration started and finished.
   `ErrorCode` and `ErrorMsg` describe the result of the last iteration.
