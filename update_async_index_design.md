@@ -69,7 +69,7 @@ CREATE TABLE mo_catalog.mo_iscp_log (
 				job_status JSON NOT NULL,
 				create_at TIMESTAMP NOT NULL,
 				drop_at TIMESTAMP NULL, 
-				primary key(account_id, table_id, job_name)
+				primary key(account_id, table_id, job_name, job_id)
 			);
 
 ```
