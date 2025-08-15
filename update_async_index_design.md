@@ -62,7 +62,7 @@ CREATE TABLE mo_catalog.mo_iscp_log (
 				account_id INT UNSIGNED NOT NULL,
 				table_id BIGINT UNSIGNED NOT NULL,
 				job_name VARCHAR NOT NULL,
-        job_id BIGINT UNSIGNED NOT NULL,
+				job_id BIGINT UNSIGNED NOT NULL,
 				job_spec JSON NOT NULL,
 				job_state TINYINT NOT NULL,
 				watermark VARCHAR NOT NULL,
