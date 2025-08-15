@@ -62,6 +62,7 @@ CREATE TABLE mo_catalog.mo_iscp_log (
 				account_id INT UNSIGNED NOT NULL,
 				table_id BIGINT UNSIGNED NOT NULL,
 				job_name VARCHAR NOT NULL,
+        job_id BIGINT UNSIGNED NOT NULL,
 				job_spec JSON NOT NULL,
 				job_state TINYINT NOT NULL,
 				watermark VARCHAR NOT NULL,
@@ -82,6 +83,8 @@ CREATE TABLE mo_catalog.mo_iscp_log (
         JobName string,
       }
   ```
+- The `job_id` is used to distinguish jobs that have the same job name and repeatedly register/unregister on the same table. In the mo_iscp_log table, jobs on the same table with the same name that have not been garbage-collected have different IDs.
+
 - `JobSpec` includes TriggerSpec and IterationDetail.
   `TriggerSpec` defines the rules for the Runner to trigger an iteration.
   `IterationDetail` defines how the Scheduler schedules and executes iterations.
